@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Realtime Data Viewer & Anomaly Detector</title>
+<style>
+ body { background:#121212; color:#fff; font-family:Arial; margin:0; padding:20px; }
+ .container{ display:flex; gap:20px; }
+ .left, .right{ flex:1; }
+ input, select, button{ padding:8px; margin:5px 0; background:#1e1e1e; color:#fff; border:1px solid #333; }
+ table{ width:100%; border-collapse:collapse; }
+ th, td{ border:1px solid #333; padding:6px; }
+ .table-box{ height:350px; overflow:auto; border:1px solid #333; margin-top:10px; }
+ .section{ margin-bottom:20px; }
+ .anomaly{ background:#5a0000; }
+ canvas{ background:#1e1e1e; margin-top:20px; border:1px solid #333; }
+</style>
+</head>
+<body>
+<h2>Realtime Data Viewer + Column-Based Anomaly Detection</h2>
+
+<div class="container">
+<div class="left">
+  <div class="section">
+    <h3>1. Upload Data (CSV)</h3>
+    <input type="file" id="fileInput" accept=".csv">
+  </div>
+
+  <div class="section">
+    <h3>2. Select Column to Analyze</h3>
+    <select id="columnSelect"></select>
+  </div>
+
+  <div class="section">
+    <button id="detectBtn">Detect Anomalies</button>
+  </div>
+</div>
+
+<div class="right">
+  <h3>Dataset Preview (Realtime)</h3>
+  <div id="tableAll" class="table-box"></div>
+
+  <h3>Clean Data</h3>
+  <div id="tableClean" class="table-box"></div>
+
+  <h3>Anomalies (<span id='anomCount'>0</span>)</h3>
+  <div id="tableAnom" class="table-box"></div>
+
+  <h3>Chart Visualization</h3>
+  <canvas id="dataChart" width="400" height="200"></canvas>
+</div>
+</div>
+
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+let originalRows = [];
+let headers = [];
+let chartInstance = null;
+
+function parseCSV(text){
+  const lines = text.trim().split(/\r?\n/);
+  headers = lines[0].split(',');
+  return lines.slice(1).map(l=>{
+    const parts = l.split(',');
+    const obj={};
+    headers.forEach((h,i)=> obj[h]=parts[i]);
+    return obj;
+  });
+}
+
+function renderOptions(){
+  const sel=document.getElementById('columnSelect');
+  sel.innerHTML='';
+  headers.forEach(h=>{
+    const o=document.createElement('option');
+    o.value=h; o.textContent=h;
+    sel.appendChild(o);
+  });
+}
+
+function renderTable(rows, containerId, highlightAnoms=false){
+  const div=document.getElementById(containerId);
+  div.innerHTML="";
+  if(rows.length===0) return;
+  let html = '<table><thead><tr>' + headers.map(h=><th>${h}</th>).join('') + '</tr></thead><tbody>';
+  rows.forEach(r=>{
+    const cls = highlightAnoms && r.__anom ? 'class="anomaly"' : '';
+    html += <tr ${cls}> + headers.map(h=><td>${r[h]}</td>).join('') + '</tr>';
+  });
+  html += '</tbody></table>';
+  div.innerHTML = html;
+}
+
+function renderChart(clean, anomalies, column){
+  const cleanVals = clean.map(r=>parseFloat(r[column]));
+  const anomVals = anomalies.map(r=>parseFloat(r[column]));
+  const labels = clean.map((,i)=>i+1).concat(anomalies.map((,i)=>clean.length+i+1));
+  const dataVals = cleanVals.concat(anomVals);
+  const backgroundColors = cleanVals.map(=>'#4caf50').concat(anomVals.map(=>'#f44336'));
+
+  const ctx = document.getElementById('dataChart').getContext('2d');
+  if(chartInstance) chartInstance.destroy();
+  chartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: column,
+        data: dataVals,
+        backgroundColor: backgroundColors
+      }]
+    },
+    options: {
+      plugins: { legend:{ display:false } },
+      scales: {
+        x: { title: { display:true, text:'Row Index' } },
+        y: { title: { display:true, text:column } }
+      }
+    }
+  });
+}
+
+document.getElementById('fileInput').addEventListener('change', function(){
+  const file=this.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    originalRows = parseCSV(e.target.result);
+    renderOptions();
+    renderTable(originalRows,'tableAll');
+    document.getElementById('tableClean').innerHTML='';
+    document.getElementById('tableAnom').innerHTML='';
+    if(chartInstance) chartInstance.destroy();
+  };
+  reader.readAsText(file);
+});
+
+document.getElementById('detectBtn').addEventListener('click', ()=>{
+  if(originalRows.length===0) return;
+  const col=document.getElementById('columnSelect').value;
+  const nums=originalRows.map(r=>parseFloat(r[col])).filter(x=>!isNaN(x));
+  const mean=nums.reduce((a,b)=>a+b,0)/nums.length;
+  const sd=Math.sqrt(nums.map(v=>(v-mean)**2).reduce((a,b)=>a+b,0)/nums.length);
+
+  const anomalies = [];
+  const clean = [];
+
+  originalRows.forEach(r=>{
+    const v=parseFloat(r[col]);
+    if(Math.abs(v-mean) > 2*sd){
+      r.__anom=true;
+      anomalies.push({...r});
+    } else {
+      r.__anom=false;
+      clean.push({...r});
+    }
+  });
+
+  document.getElementById('anomCount').textContent = anomalies.length;
+  renderTable(clean,'tableClean');
+  renderTable(anomalies,'tableAnom',true);
+  renderChart(clean, anomalies, col);
+});
+</script>
+</body>
+</html>
